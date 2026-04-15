@@ -87,6 +87,7 @@ Sigue estos pasos:
 3. Introducir credenciales: Se abrirá una ventana pidiendo usuario y contraseña.
    * Usuario: adrian
    * Contraseña: La que asignaste con el comando smbpasswd -a.
+
 ## I. Fase de Preparación e Instalación
 En esta etapa se prepara el sistema operativo para soportar las funciones de un controlador de dominio y se establece la identidad de red.
 * 476. sudo apt update
