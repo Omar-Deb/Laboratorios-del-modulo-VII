@@ -1,0 +1,178 @@
+﻿## Práctica 1: Implementación de NFS (Network File System)
+Configuración de un sistema de archivos compartido para permitir el acceso remoto entre sistemas Linux.
+### Lado del Servidor (Server)
+Comandos ejecutados:
+Bash
+445 sudo apt install nfs-kernel-server        # Instalación del servicio servidor
+446 cd /mnt/OS3/                              # Acceso al directorio raíz del recurso
+447 ls                                        # Verificación de contenido
+448 cd                                        # Regreso al HOME
+449 sudo chmod 755 /mnt/OS3/                  # Ajuste de permisos de acceso
+450 sudo nano /etc/exports                    # Configuración del archivo de exportación
+451 sudo exportfs -a                          # Exportar los directorios configurados
+452 sudo systemctl restart nfs-kernel-server  # Reinicio para aplicar cambios
+454 cd /mnt/OS3/                              # Acceso al directorio compartido
+456 sudo nano ADRIAN_A.txt                    # Creación de archivo de prueba en el servidor
+458 sudo systemctl restart nfs-kernel-server  # Reinicio de seguridad
+
+
+Configuración de /etc/exports:
+Plaintext
+/mnt/OS3 192.168.158.128/24(rw,sync,no_subtree_check)
+
+
+________________
+
+
+### Lado del Cliente (Client)
+Comandos ejecutados:
+Bash
+395 sudo apt install nfs-common -y            # Herramientas de cliente NFS
+397 cd /var/OS3/                              # Directorio local de montaje (Carpeta de guardado)
+398 sudo nano /etc/fstab                      # Configuración de montaje persistente
+399 sudo mount 192.168.158.128:/mnt/OS3       # Montaje manual inicial
+400 sudo systemctl daemon-reload              # Recarga de configuración de systemd
+401 sudo mount 192.168.158.128:/mnt/OS3       # Ejecución del montaje
+405 ls /var/OS3                               # Verificación de archivos sincronizados
+406 sudo nano ADRIAN_A.txt                    # Prueba de edición desde el cliente
+
+
+Configuración de /etc/fstab (Carpeta de guardado):
+Plaintext
+192.168.158.128:/mnt/OS3 /var/OS3 nfs defaults 0 0
+
+
+## Práctica 2: Servidor de Archivos Samba (SMB/CIFS)
+Instalación y gestión de carpetas compartidas con permisos de grupo y máscaras de creación.
+### Comandos Comentados
+Bash
+# Instalación de Samba y dependencias de Kerberos y DNS
+sudo apt install -y samba samba-dsdb-modules samba-vfs-modules kbr5-user krb5-config krb5-kdc krb5-admin-server dnsutils
+
+
+sudo systemctl enable --now snbd nmbd         # Habilita e inicia los demonios de Samba y nombres de red
+sudo groupadd sambashare                      # Crea el grupo de sistema para gestionar el acceso al recurso
+sudo mkdir -p /srv/samba/adrian               # Crea la estructura de directorios para el almacenamiento
+sudo chown root:sambashare /srv/samba/adrian  # Cambia el grupo propietario a 'sambashare'
+sudo chmod 2775 /srv/samba/adrian             # Asigna rwxrwxr-x y activa el bit SGID para herencia de grupo
+
+
+# Gestión de usuario de seguridad
+sudo useradd -M -d /srv/samba/adrian -s /usr/sbin/nologin adrian # Crea usuario sin HOME ni acceso a terminal
+sudo usermod -aG sambashare adrian            # Agrega al usuario al grupo con permisos sobre la carpeta
+sudo smbpasswd -a adrian                      # Define la contraseña exclusiva para el protocolo Samba
+
+
+sudo nano /etc/samba/smb.conf                 # Apertura del archivo de configuración global
+sudo systemctl restart smbd                   # Reinicia el servicio para activar el nuevo recurso [adrian]
+cd /srv/samba/adrian                          # Entra al directorio del recurso
+sudo touch adrian{1..100}.txt                 # Generación masiva de 100 archivos de texto para prueba
+
+
+### Configuración de /etc/samba/smb.conf
+Plaintext
+[adrian]
+   path = /srv/samba/adrian
+   browsable = yes
+   writable = yes
+   valid user = 0sambashare                   # Permite el acceso a todos los miembros del grupo
+   create mask = 0664                         # Permisos para archivos nuevos (rw-rw-r--)
+   directory mask = 0775                      # Permisos para carpetas nuevas (rwxrwxr-x)
+
+
+Para entrar a la carpeta compartida de Samba desde Windows, el proceso es muy directo. Solo necesitas la IP de tu servidor Linux y las credenciales que configuraste.
+Sigue estos pasos:
+1. Abrir el Explorador de Archivos: Presiona la combinación de teclas Win + E.
+2. Ingresar la ruta de red: En la barra de direcciones superior (o presionando Win + R), escribe la ruta usando el formato UNC: \\192.168.158.128\adrian (Nota: Asegúrate de usar la IP exacta de tu servidor).
+3. Introducir credenciales: Se abrirá una ventana pidiendo usuario y contraseña.
+   * Usuario: adrian
+   * Contraseña: La que asignaste con el comando smbpasswd -a.
+## I. Fase de Preparación e Instalación
+En esta etapa se prepara el sistema operativo para soportar las funciones de un controlador de dominio y se establece la identidad de red.
+* 476. sudo apt update
+   * Actualiza los índices de paquetes para obtener las últimas versiones de seguridad.
+* 477. sudo apt install -y samba samba-dsdb-modules samba-vfs-modules krb5-user krb5-config krb5-kdc krb5-admin-server dnsutils
+   * Instala el núcleo de Samba AD, módulos de base de datos de Active Directory, el servidor/cliente de Kerberos y herramientas de diagnóstico DNS.
+* 479. sudo nano /etc/hosts
+   * Configuración Crítica: Permite que Kerberos asocie la IP con el nombre calificado (FQDN).
+Plaintext
+127.0.0.1       localhost
+192.168.158.128 dc.os3.inet     dc
+* * 480. sudo hostnamectl set-hostname dc.os3.inet
+   * Establece el nombre de host único para el dominio.
+* 481. sudo hostnamectl
+   * Verifica que el cambio de nombre se haya aplicado correctamente.
+________________
+
+
+## II. Configuración de Kerberos y Provisión del Dominio
+Kerberos es el protocolo de autenticación por tickets. La provisión crea la base de datos de objetos (usuarios/grupos).
+* 483. sudo nano /etc/krb5.conf
+   * Configuración de Seguridad: (El Reino DEBE ir en mayúsculas).
+Plaintext
+[libdefaults]
+    default_realm = OS3.INET
+    dns_lookup_realm = false
+    dns_lookup_kdc = true
+
+
+[realms]
+    OS3.INET = {
+        kdc = dc.os3.inet
+        admin_server = dc.os3.inet
+    }
+
+
+[domain_realm]
+    .os3.inet = OS3.INET
+    os3.inet = OS3.INET
+* * 484. sudo mv /etc/samba/smb.conf /etc/samba/smb.conf.bak
+   * Respalda la configuración previa. Samba AD requiere un archivo limpio para la provisión.
+* 485. sudo samba-tool domain provision --use-rfc2307 --interactive
+   * Asistente Interactivo: Aquí se define la política de complejidad de contraseñas.
+   * Respuestas: Realm: OS3.INET, Domain: OS3, Role: dc, DNS: SAMBA_INTERNAL, Forwarder: 8.8.8.8, Password: Omar1234-.
+________________
+
+
+## III. Gestión de Servicios y Resolución DNS (Puerto 53)
+Active Directory depende totalmente del DNS. Aquí desactivamos el resolvedor de Ubuntu para que Samba tome el control.
+* 488. sudo lsof -i :53
+   * Identifica qué servicio está ocupando el puerto DNS (normalmente systemd-resolved).
+* 489. sudo systemctl stop systemd-resolved
+* 490. sudo systemctl disable systemd-resolved
+   * Evita conflictos de puertos desactivando el servicio nativo.
+* 492. sudo rm /etc/resolv.conf
+* 493. sudo nano /etc/resolv.conf
+   * Configuración Estática: El servidor debe ser su propio DNS.
+Plaintext
+domain os3.inet
+search os3.inet
+nameserver 127.0.0.1
+* * 494. sudo systemctl restart samba-ad-dc
+   * Reinicia el controlador para que empiece a escuchar en el puerto 53.
+________________
+
+
+## IV. Integración de Winbind y Verificación
+Winbind permite que Linux "entienda" a los usuarios que vienen de la base de datos de Windows.
+* 498. sudo apt install winbind -y
+   * Instala el demonio que unifica usuarios de AD con el sistema Linux.
+* 501. sudo samba-tool domain info 127.0.0.1
+   * Muestra el nivel funcional del dominio y el Forest.
+* 505. host -t SRV _kerberos._udp.os3.inet
+   * Prueba de Fuego: Si este registro SRV responde, Windows podrá encontrar al controlador de dominio.
+* 506. sudo samba-tool user create lanegracubana omar1234- --login-shell=/bin/bash
+   * Crea la cuenta de usuario con la contraseña omar1234- para la prueba final.
+________________
+
+
+## V. Guía de Acceso desde Windows
+Para que la autenticación sea exitosa, Windows debe ser configurado específicamente:
+1. Configuración DNS en Windows:
+   * Ve a Propiedades de Red desactivas IPV6 y en (IPv4) y pon como DNS Preferido la IP: 192.168.158.128. o la del servidor para ser mas especifico
+2. Unión al Dominio:
+   * Únete al dominio os3.inet usando la cuenta Administrator y la clave definida en el paso 485.
+3. Inicio de Sesión (Logon):
+   * Al reiniciar, selecciona "Otro usuario" e ingresa el formato NetBIOS:
+   * Usuario: OS3\lanegracubana
+   * Contraseña: omar1234-
